@@ -92,7 +92,7 @@ def main():
     # ----------------------------
     # 1. Load your local dataset
     # ----------------------------
-    dataset_file = "data/training_data/training_data_2024_full text_prompts.jsonl"
+    dataset_file = "data/training_data_100_papers/training_data_2024_full text_prompts.jsonl"
     data = []
     with open(dataset_file, "r", encoding="utf-8") as f:
         for line in f:
@@ -108,7 +108,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    max_length = 2048
+    max_length = 3144
     full_dataset = InstructionDataset(data, tokenizer, max_length)
 
     # Split into train/val
