@@ -94,7 +94,7 @@ def main(args):
     # Load LoRA fine-tuned model (wrap the base model)
     model = PeftModel.from_pretrained(
         base_model,
-        "models/lora-llama8b-instruct-finetuned-full-text-100",  # <-- PATH TO YOUR FINETUNED MODEL
+        "models/lora-llama8b-instruct-finetuned-full-text-100",  # <-- FINETUNED MODEL
     )
 
     # Prepare model for inference
