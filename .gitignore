@@ -11,3 +11,7 @@ __pycache__/
 # Ignore saved models
 models/*
 archive_scripts/*
+
+data/arxiv_papers/2023_papers/*
+data/arxiv_papers/2024_papers/*
+
