@@ -23,3 +23,13 @@ data/arxiv_papers/all_papers.jsonl
 
 # Ignore logs
 logs/*
+
+# jsonl files
+all_papers_2015_to_2016.jsonl
+all_papers_2017_to_2018.jsonl
+all_papers_2019_to_2020.jsonl
+all_papers_2021_to_2022.jsonl
+
+papers_*_top5_by_day.jsonl
+/2021_papers
+/archive_scripts
