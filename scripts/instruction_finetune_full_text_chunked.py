@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+# This script is a modification of instruction_finetune_full_text.py, 
+# where it chunks the input full text into smaller pieces to fit within 
+# the model's max_length, and trains the model in parts. 
+
 import json
 import torch
 from torch.utils.data import Dataset, random_split
@@ -110,9 +113,7 @@ class InstructionDataset(Dataset):
         return self.preprocessed_data[idx]
 
 def main():
-    # ----------------------------
-    # 1. Load your dataset
-    # ----------------------------
+    # 1. Load  dataset
     dataset_file = "data/training_data_100_papers/training_data_2024_full text_prompts.jsonl"
     data = []
     with open(dataset_file, "r", encoding="utf-8") as f:
@@ -120,9 +121,7 @@ def main():
             if line.strip():
                 data.append(json.loads(line))
     
-    # ----------------------------
     # 2. Prepare the tokenizer and add special tokens
-    # ----------------------------
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     special_tokens_dict = {
         "bos_token": "<|begin_of_text|>",
@@ -140,9 +139,7 @@ def main():
     val_size = len(full_dataset) - train_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
     
-    # ----------------------------
     # 3. Set up quantization configuration and load base model with QLoRA
-    # ----------------------------
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -165,9 +162,7 @@ def main():
     
     base_model = prepare_model_for_kbit_training(base_model)
     
-    # ----------------------------
     # 4. Set up LoRA configuration (QLoRA)
-    # ----------------------------
     peft_config = LoraConfig(
         r=8,
         lora_alpha=32,
@@ -177,9 +172,7 @@ def main():
     )
     model = get_peft_model(base_model, peft_config)
     
-    # ----------------------------
     # 5. Training Arguments
-    # ----------------------------
     training_args = TrainingArguments(
         output_dir="models/qlora-llama8b-instruct-finetuned-full-text",
         overwrite_output_dir=True,
@@ -197,9 +190,7 @@ def main():
         save_total_limit=2
     )
     
-    # ----------------------------
     # 6. Trainer Setup
-    # ----------------------------
     model.gradient_checkpointing_enable()  # Reduce memory usage
     trainer = Trainer(
         model=model,
@@ -208,14 +199,10 @@ def main():
         eval_dataset=val_dataset
     )
     
-    # ----------------------------
     # 7. Train the Model
-    # ----------------------------
     trainer.train()
     
-    # ----------------------------
     # 8. Save the QLoRA Adapters
-    # ----------------------------
     trainer.save_model("models/qlora-llama8b-instruct-finetuned-full-text")
     print("Training complete. Model saved in 'models/qlora-llama8b-instruct-finetuned-full-text'.")
 
