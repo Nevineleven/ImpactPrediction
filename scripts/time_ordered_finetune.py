@@ -1,3 +1,20 @@
+# This script fine-tunes a 4-bit quantized Llama 3.1 8B Instruct model using LoRA to
+# handle chronological data tagged with a custom special token (e.g., <|year_month=YYYY-MM|>).
+
+# Specifically:
+
+# 1. Loads a JSONL dataset where each line has a 'text' field containing an annotated abstract
+#    prefixed with a timestamp token (e.g. "<|year_month=2023-01|>\nAbstract: ...").
+# 2. Adds this timestamp marker ("<|year_month=") as a special token to the tokenizer,
+#    then resizes the model embeddings.
+# 3. Applies causal language modeling (standard next-token prediction) to the entire text,
+#    padding sequences with a custom collator that sets ignored positions to -100.
+# 4. Loads a 4-bit quantized base model (to save GPU memory), then adds LoRA adapters
+#    (PEFT) to fine-tune only low-rank adapter weights.
+# 5. Saves the resulting LoRA adapter weights.
+
+
+
 import json
 import torch
 from datasets import load_dataset
@@ -31,7 +48,6 @@ def prepare_dataset(jsonl_path):
     Returns a dataset with a 'text' field that we will tokenize for causal LM.
     """
     dataset = load_dataset("json", data_files=jsonl_path, split="train")
-    # If you want to do any filtering or custom transformations, do it here.
 
     return dataset
 
@@ -69,7 +85,6 @@ def data_collator(features):
         lb = f["labels"]
 
         pad_size = max_len - len(ids)
-        # We'll assume the pad_token_id is eos_token_id for LLaMA-based models
         padded_ids = ids + [tokenizer.pad_token_id]*pad_size
         padded_am = am + [0]*pad_size
         padded_lb = lb + [-100]*pad_size  # -100 is ignore index
@@ -88,7 +103,7 @@ def data_collator(features):
 if __name__ == "__main__":
     # 1) Paths / Config
     TRAIN_FILE = "data/training_data/training_data_time_ordered_fine_tuning/timeordered_abstract_finetune.jsonl"
-    BASE_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"  # or your Llama 3 base
+    BASE_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct" 
     OUTPUT_DIR = "models/lora-llama3-time-finetuned"
 
     # 2) Load dataset
@@ -114,7 +129,7 @@ if __name__ == "__main__":
         trust_remote_code=True
     )
 
-    # If we added new tokens, model embeddings must be resized
+    # Resize token embeddings to include the new special token
     model.resize_token_embeddings(len(tokenizer))
 
     # 6) Apply LoRA
@@ -123,7 +138,7 @@ if __name__ == "__main__":
     lora_config = LoraConfig(
         r=8,
         lora_alpha=32,
-        target_modules=["q_proj", "v_proj"],  # adjust as needed
+        target_modules=["q_proj", "v_proj"],  
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM"
@@ -134,9 +149,9 @@ if __name__ == "__main__":
     from transformers import TrainingArguments
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        num_train_epochs=1,             # adjust
+        num_train_epochs=1,            
         learning_rate=2e-4,
-        per_device_train_batch_size=1,  # adjust
+        per_device_train_batch_size=1, 
         gradient_accumulation_steps=4,
         fp16=True,
         logging_steps=50,
@@ -153,7 +168,6 @@ if __name__ == "__main__":
         args=training_args,
         train_dataset=dataset,
         data_collator=data_collator,
-        # If you want a small validation set, you can split and pass eval_dataset=some_eval
     )
 
     # 9) Train

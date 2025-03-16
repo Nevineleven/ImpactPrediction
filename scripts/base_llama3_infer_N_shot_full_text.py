@@ -1,3 +1,34 @@
+# This script is used to predict the reviews for the given prompts using the pretrained 
+# Llama 3.1 8B Instruct model without fine-tuning, in zero-shot and one-shot settings for the full text prompts.
+# The model is loaded from the Hugging Face model hub and the predictions are saved in the output file.
+# The input dataset is a JSONL file with the following format:
+# {"paper_id": "paper_id", "messages": [{"role": "system", "content": "system message"}, {"role": "user", "content": "user message"}]}
+# The output file is a JSONL file with the following format:
+# {"paper_id": "paper_id", "review": "generated review"}
+
+# Special modifications to handle GPU-CPU memory management and full text prompts:
+# 1. The model is loaded in 4-bit quantization mode to reduce the memory footprint.
+# 2. The model is moved to the GPU only during inference to avoid memory issues.
+# 3. The GPU memory is cleared after processing each line to avoid memory leaks.
+# 4. At generation time, if we hit an OOM error because the prompt is too long, we skip the sample.
+
+# Special modifications for prompt construction and training:
+# 1. The prompt is constructed using the system and user messages from the dataset according to the Llama 3.1 tokenizer format.
+# 2. The assistant header token is appended to cue the generation of the assistant's response.
+# 3. Temperature and top-p nucleus sampling probability are used for generation.
+
+
+# Usage:
+# python predict_llama3_8b_instruct_N_shot_GPU.py \ 
+# --dataset_path data/test_data/zero_shot/test_data_2024_summary_prompts_one_sample.jsonl \ 
+# --output_path results/llama3_8BInstruct/zero_shot_2024_summary_prompts_one_sample.jsonl \ 
+# --model_name meta-llama/Llama-3.1-8B-Instruct \ 
+# --max_new_tokens 256 \ 
+# --temperature 0.7 \
+# --top_p 0.95 \
+# --do_sample
+# 
+
 
 import json
 import torch
@@ -17,7 +48,7 @@ def construct_prompt(messages):
             prompt += f"<|start_header_id|>{message['role']}<|end_header_id|>\n"
             prompt += message["content"].strip() + "\n"
             prompt += "<|eot_id|>\n"
-    # Append the assistant header to cue the generation
+    # append the assistant header to cue the generation
     prompt += "<|start_header_id|>assistant<|end_header_id|>\n"
     return prompt
 
@@ -26,10 +57,10 @@ def process_line(entry, tokenizer, model, args, device):
     paper_id = entry.get("paper_id", "unknown")
     messages = entry.get("messages", [])
     
-    # Build the prompt
+    # construct the prompt
     prompt = construct_prompt(messages)
     
-    # Tokenize the prompt; ensure nothing is truncated.
+    # tokenize the prompt; nothing is truncated.
     inputs = tokenizer(prompt, return_tensors="pt", truncation=False)
     # Move input tensors to GPU
     input_ids = inputs.input_ids.to(device)
@@ -39,7 +70,6 @@ def process_line(entry, tokenizer, model, args, device):
     else:
         attention_mask = torch.ones_like(input_ids).to(device)
 
-    # Prepare generation kwargs
     generation_kwargs = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -56,7 +86,7 @@ def process_line(entry, tokenizer, model, args, device):
 
     generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=False)
     
-    # Extract the assistant's response by finding the assistant header token.
+    # extract the assistant's response by finding the assistant header token.
     assistant_start = generated_text.find("<|start_header_id|>assistant<|end_header_id|>")
     if assistant_start != -1:
         assistant_response = generated_text[assistant_start:]
@@ -64,18 +94,16 @@ def process_line(entry, tokenizer, model, args, device):
         end_text_idx = assistant_response.find("<|end_of_text|>")
         if end_text_idx != -1:
             assistant_response = assistant_response[:end_text_idx]
-        # Remove the header token to get the pure response.
         assistant_response = assistant_response.replace("<|start_header_id|>assistant<|end_header_id|>", "").strip()
     else:
         assistant_response = generated_text.strip()
 
-    # Remove any lingering <|eot_id|> tokens
+    # remove any lingering <|eot_id|> tokens
     assistant_response = assistant_response.replace("<|eot_id|>", "").strip()
 
     return paper_id, assistant_response
 
 def main(args):
-    # Ensure output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
 
     # Load tokenizer from base model
@@ -84,7 +112,7 @@ def main(args):
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
     
-    # Load base model in 4-bit precision with auto device map
+    # load base model in 4-bit precision with auto device map
     from transformers import BitsAndBytesConfig
 
     quant_config = BitsAndBytesConfig(
@@ -101,7 +129,6 @@ def main(args):
     torch_dtype=torch.float16
 )
 
-    # Prepare model for inference
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
 
@@ -129,7 +156,6 @@ def main(args):
             torch.cuda.empty_cache()
             continue  # Move on to next sample
 
-    # Write out predictions
     with open(args.output_path, "w") as outfile:
         for prediction in predictions:
             outfile.write(json.dumps(prediction) + "\n")

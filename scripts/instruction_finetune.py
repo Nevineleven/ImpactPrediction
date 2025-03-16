@@ -1,3 +1,30 @@
+# This script fine-tunes a Llama 3.1 8B Instruct model (in 4-bit precision) with LoRA to generate
+# structured summaries from short system/user prompts. Specifically, it:
+
+# 1. Reads a JSONL dataset where each line has:
+#    {
+#      "paper_id": "...",
+#      "messages": [
+#        {"role": "system",    "content": "..."},
+#        {"role": "user",      "content": "..."},
+#        {"role": "assistant", "content": "..."}
+#      ]
+#    }
+# 2. Builds a prompt for the system/user content using special Llama tokens (<|begin_of_text|>, etc.).
+# 3. Combines the prompt with the target "assistant" text and applies teacher forcing:
+#    - Tokens corresponding to the prompt are masked out of the loss (labeled -100).
+#    - Only the assistant portion is used as a learning signal.
+# 4. Uses a custom data collator to pad sequences and label masks.
+# 5. Loads a 4-bit quantized base model, then applies LoRA adapters (PEFT).
+# 6. Performs fine-tuning (gradient updates) to learn how to produce the assistant's structured summary.
+# 7. Saves only the LoRA adapter weights after training.
+
+# Special Considerations:
+#   - Teacher forcing is used: the prompt portion is labeled -100 to exclude it from the loss.
+#   - 4-bit quantization reduces GPU memory usage.
+#   - LoRA only trains the adapter layers, keeping the base model mostly frozen.
+#   - Logging, saving steps, and other trainer settings can be customized in TrainingArguments.
+
 import json
 import torch
 from datasets import load_dataset
@@ -9,17 +36,13 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 
-# ----------------------------------------------------------------------
 # Special Llama 3 Instruct tokens
-# ----------------------------------------------------------------------
 BOS = "<|begin_of_text|>"
 START_HDR = "<|start_header_id|>"
 END_HDR = "<|end_header_id|>"
 EOT = "<|eot_id|>"
 
-# ----------------------------------------------------------------------
 # 1) Prompt Construction: Single system, single user, single assistant
-# ----------------------------------------------------------------------
 def build_llama3_instruct_prompt(messages):
     """
     messages is a list of exactly 3 items:
@@ -46,9 +69,7 @@ def build_llama3_instruct_prompt(messages):
     return prompt, assistant_text
 
 
-# ----------------------------------------------------------------------
 # 2) Read from .jsonl and construct dataset
-# ----------------------------------------------------------------------
 def load_and_prepare_dataset(jsonl_path):
     """
     Expects lines like:
@@ -75,9 +96,7 @@ def load_and_prepare_dataset(jsonl_path):
     return dataset.map(map_fn)
 
 
-# ----------------------------------------------------------------------
 # 3) Tokenization with teacher forcing
-# ----------------------------------------------------------------------
 def tokenize_fn(example, tokenizer, max_length=1024):
     """
     We'll combine input_text + target_text.
@@ -94,7 +113,6 @@ def tokenize_fn(example, tokenizer, max_length=1024):
         truncation=True
     )
 
-    # Identify how many tokens belong to the prompt only
     tokenized_prompt = tokenizer(
         prompt, 
         max_length=max_length, 
@@ -102,7 +120,6 @@ def tokenize_fn(example, tokenizer, max_length=1024):
     )
     prompt_len = len(tokenized_prompt["input_ids"])
 
-    # Prepare labels
     input_ids = tokenized_full["input_ids"]
     labels = [-100] * len(input_ids)
     for i in range(prompt_len, len(input_ids)):
@@ -116,7 +133,6 @@ def data_collator(features):
     """
     A simple data collator that pads the inputs to the max length in the batch.
     """
-    # We assume all features have 'input_ids', 'attention_mask', 'labels'
     import numpy as np
 
     # Find max length
@@ -132,8 +148,7 @@ def data_collator(features):
         lb  = f["labels"]
 
         pad_size = max_len - len(ids)
-        # Use tokenizer.pad_token_id if available
-        # We'll assume we know the pad_token_id is e.g. tokenizer.eos_token_id
+
         padded_ids = ids + [tokenizer.pad_token_id] * pad_size
         padded_am  = am  + [0] * pad_size
         padded_lb  = lb  + [-100] * pad_size
@@ -149,9 +164,7 @@ def data_collator(features):
     }
     return batch
 
-# ----------------------------------------------------------------------
 # 4) Main finetuning script
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
 
     TRAIN_FILE = "data/training_data_100_papers/training_data_2024_summary_prompts.jsonl"
@@ -159,7 +172,6 @@ if __name__ == "__main__":
     # Load data
     dataset = load_and_prepare_dataset(TRAIN_FILE)
 
-    # Base model (Replace with your actual Llama 3 base on HF)
     BASE_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
 
     # Load tokenizer

@@ -1,11 +1,32 @@
+# This script performs inference using a Llama 3.1 8B Instruct base model merged with a
+# time-ordered + instruction fine-tuned LoRA adapter. It:
+
+# 1. Loads a JSONL file containing system/user messages annotated with timestamps.
+# 2. Builds a single-turn Llama 3 Instruct prompt for each entry.
+# 3. Uses the final LoRA checkpoint to generate an 'assistant' response in 4-bit quantized mode.
+# 4. Writes the generated text to a new JSONL file, preserving the 'paper_id' and the newly
+#    computed 'review' text.
+
+# Key Files:
+#   - Base Model: meta-llama/Llama-3.1-8B-Instruct
+#   - LoRA Checkpoint: models/lora-llama3-time-instruct-finetuned-abstract-1000
+#   - Input JSONL: data/test_data/test_data_with_timestamps/test_data_2025_abstract_prompts_with_timestamp.jsonl
+#     Each line includes {"paper_id": "...", "messages": [...]}, where messages
+#     typically contain a timestamp in the system prompt.
+#   - Output JSONL: results/time_ordered_instruct_test_data_2025_abstract_prompts_with_timestamp.jsonl
+
+# Special Notes:
+#   - We add the same custom token "<|year_month=" to ensure correct embedding alignment.
+#   - The user portion of the prompt is appended, and the assistant header cues generation
+#     from the newly loaded LoRA. We decode only the new tokens beyond the prompt length.
+
+
 import json
 import torch
 from peft import PeftModel
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
-# --------------------------------------------------------------------
 # The same special tokens used in training
-# --------------------------------------------------------------------
 SPECIAL_TIMESTAMP_TOKEN = "<|year_month="
 BOS = "<|begin_of_text|>"
 START_HDR = "<|start_header_id|>"
@@ -40,25 +61,19 @@ def build_llama3_instruct_prompt(system_content, user_content):
     )
 
 def main():
-    # ----------------------------------------------------------------
     # 1) Paths
-    # ----------------------------------------------------------------
     BASE_MODEL = "meta-llama/Llama-3.1-8B-Instruct"           # same base used in training
     LORA_PATH = "models/lora-llama3-time-instruct-finetuned-abstract-1000"                 # final LoRA from instruction stage
     TEST_DATA_PATH = "data/test_data/test_data_with_timestamps/test_data_2025_abstract_prompts_with_timestamp.jsonl" # input test data
     OUTPUT_FILE = "results/time_ordered_instruct_test_data_2025_abstract_prompts_with_timestamp.jsonl"
 
-    # ----------------------------------------------------------------
     # 2) Load tokenizer & add the same special token
-    # ----------------------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer = add_special_tokens(tokenizer)
 
-    # ----------------------------------------------------------------
     # 3) Load base model & resize embeddings
-    # ----------------------------------------------------------------
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         load_in_4bit=True,
@@ -67,9 +82,7 @@ def main():
     )
     base_model.resize_token_embeddings(len(tokenizer))
 
-    # ----------------------------------------------------------------
     # 4) Load the final (instruction) LoRA
-    # ----------------------------------------------------------------
     model = PeftModel.from_pretrained(base_model, LORA_PATH)
     model.eval()
 
@@ -82,9 +95,7 @@ def main():
         do_sample=True,
     )
 
-    # ----------------------------------------------------------------
     # 5) Inference Loop
-    # ----------------------------------------------------------------
     with open(TEST_DATA_PATH, "r", encoding="utf-8") as infile, \
          open(OUTPUT_FILE, "w", encoding="utf-8") as outfile:
         
@@ -97,9 +108,7 @@ def main():
             paper_id = data["paper_id"]
             messages = data["messages"]
 
-            # We assume messages[0] is system, messages[1] is user, messages[2] is assistant (from the test set).
-            # But we IGNORE the existing assistant content and generate a new one.
-
+    
             system_content = messages[0]["content"]
             user_content   = messages[1]["content"]
 

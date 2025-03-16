@@ -1,3 +1,27 @@
+
+# This script loads a 4-bit quantized Llama 3.1 8B Instruct model plus LoRA 
+# adapter weights and generates reviews for each entry in a JSONL test file.
+
+# 1. It expects lines of the form:
+#    {"paper_id": "...", "messages": [
+#        {"role": "system", "content": "..."},
+#        {"role": "user",   "content": "..."}
+#    ]}
+# 2. Constructs a single-turn Llama 3.1 prompt with system and user messages, 
+#    then appends the assistant header token.
+# 3. Uses the LoRA-finetuned model to generate up to 256 tokens, 
+#    sampling with temperature=0.7, top-p=0.9, and top-k=40 by default.
+# 4. Saves the resulting "assistant" text to an output JSONL file in the format:
+#    {"paper_id": "...", "review": "..."}.
+
+# Key Files:
+#   - Input JSONL: data/test_data/zero_shot/test_data_2025_abstract_prompts.jsonl
+#   - Output JSONL: results/hundred_shot_test_data_2025_abstract_prompts.jsonl
+#   - LoRA Weights: models/lora-llama3-finetuned-abstract-100
+#   - Base Model: meta-llama/Llama-3.1-8B-Instruct
+
+
+
 import json
 import torch
 from peft import PeftModel
@@ -30,17 +54,13 @@ def build_llama3_instruct_prompt(system_text, user_text):
     return prompt
 
 def main():
-    # ------------------------------------------------------------------
     # 1) Paths
-    # ------------------------------------------------------------------
     BASE_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"
     LORA_WEIGHTS_PATH = "models/lora-llama3-finetuned-abstract-100"
     TEST_DATA_PATH = "data/test_data/zero_shot/test_data_2025_abstract_prompts.jsonl"
     OUTPUT_PATH = "results/hundred_shot_test_data_2025_abstract_prompts.jsonl"
 
-    # ------------------------------------------------------------------
     # 2) Load Tokenizer & Base Model + LoRA
-    # ------------------------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token  # for LLaMA-based models
@@ -54,9 +74,7 @@ def main():
     model = PeftModel.from_pretrained(base_model, LORA_WEIGHTS_PATH)
     model.eval()
 
-    # ------------------------------------------------------------------
-    # 3) Generation config (tweak as desired)
-    # ------------------------------------------------------------------
+    # 3) Generation config 
     gen_config = GenerationConfig(
         max_new_tokens=256,
         temperature=0.7,
@@ -65,9 +83,7 @@ def main():
         do_sample=True
     )
 
-    # ------------------------------------------------------------------
     # 4) Inference Loop
-    # ------------------------------------------------------------------
     with open(TEST_DATA_PATH, "r", encoding="utf-8") as infile, \
          open(OUTPUT_PATH, "w", encoding="utf-8") as outfile:
 
